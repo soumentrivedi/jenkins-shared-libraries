@@ -1,0 +1,66 @@
+//When will be using this template when you just want to build and publish node modules.
+@Library('jenkins-shared-libraries@master') _ //Importing shared Libraries
+import src.lib.*;
+pipeline {
+    agent any
+    // For scheduling Nexus IQ scans. Please configure the cron suitable for your project
+    // Note: This can be extended for other scheduled run process as well.
+    triggers {
+         cron('30 16 * * *')
+    }
+
+    environment {
+      // to determine project type
+      buildType = "npm or yarn"
+      //Common variables
+      hipchatRoom = "<hipchat_room>" //Mandatory field
+      email = "<email_address>"
+    }
+
+    stages {
+        stage('Checkout'){
+          steps {
+            //clean the workspace before new pipeline run
+            deleteDir()
+            checkout scm
+          }
+        }
+        stage('Build') {
+            steps {
+                buildNpm()
+                //When using yarn
+                //buildYarn()
+            }
+        }
+        stage('Code Quality') {
+            steps {
+                sh 'echo "code quality check"'
+                codeQuality([sonar    : "false", //Mandatory
+                             clover   : "false", //Optional.
+                             cobertura: "true"
+                ])
+            }
+            post {
+                success {
+                    publishReport([report_type: "cobertura", report_dir: "coverage", reportFiles: "cobertura-coverage.xml", reportFormat: "xml"])
+                }
+            }
+        }
+    }
+
+    //Pipeline Post steps
+    post {
+        success {
+            notify([hipchat_room: "${env.hipchatRoom}", //Mandatory
+                    //  email: "${env.email}", //Optional
+                    build_status: "SUCCESS"
+            ])
+        }
+        failure {
+            notify([hipchat_room: "${env.hipchatRoom}", //Mandatory
+                    //  email: "${env.email}", //Optional
+                    build_status: "FAILED"
+            ])
+        }
+    }
+}

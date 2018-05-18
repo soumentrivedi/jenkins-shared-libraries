@@ -1,0 +1,20 @@
+---
+applications:
+  product-zero-pipeline:
+     - all
+  message-center-pipeline:
+     - all
+  appointment-center-pipeline:
+     - all
+  evisits-pipeline:
+     - all
+  identity-cloud:
+     - all
+  pharmacy-center-cloud:
+     - all
+  my-coverage-cost-pipeline:
+     - all
+  guided-member-onboarding-pipeline:
+     - all
+  profile-preferences-pipeline:
+     - all

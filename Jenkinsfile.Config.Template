@@ -1,0 +1,51 @@
+@Library('jenkins-shared-libraries@master') _ //Importing shared Libraries
+import src.lib.*;
+
+pipeline {
+
+  //agent - Specifies jenkins slave node where you want to run the jobs. Can be defined per stage as well.
+  agent any
+
+  // environment variable for the pipeline. Shared among stages.
+  /*environment {
+    key = value
+   } */
+
+  environment {
+    //Common variables
+    hipchatRoom = "Hipchat Room Name" //Mandatory field
+    email = "<email_address>" //Optional field
+    buildType = "maven"
+  }
+
+
+  stages {
+    stage('Checkout'){
+      steps {
+        //clean the workspace before new pipeline run
+        deleteDir()
+        checkout scm
+      }
+    }
+    stage('Build') {
+      steps {
+        buildMvn()
+      }
+    }
+  }
+  //Pipeline Post steps
+  post {
+    success {
+      notify([hipchat_room: "${env.hipchatRoom}", //Mandatory
+        email: "${env.email}", //Optional
+        build_status: "SUCCESS"
+      ])
+    }
+    failure {
+      notify([hipchat_room: "${env.hipchatRoom}", //Mandatory
+        email: "${env.email}", //Optional
+        build_status: "FAILED"
+      ])
+    }
+  }
+}

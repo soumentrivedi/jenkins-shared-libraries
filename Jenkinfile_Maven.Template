@@ -1,0 +1,393 @@
+@Library('jenkins-shared-libraries@master') _ //Importing shared Libraries
+import src.lib.*;
+
+pipeline {
+
+  //agent - Specifies jenkins slave node where you want to run the jobs. Can be defined per stage as well.
+    agent any
+
+    // For scheduling Nexus IQ scans. Please configure the cron suitable for your project
+    // Note: This can be extended for other scheduled run process as well.
+    triggers {
+        cron('30 16 * * *')
+    }
+
+  // environment variable for the pipeline. Shared among stages.
+    /*environment {
+      key = value
+     } */
+
+     // parameters for manual triggers for stage specific run and deploying specific version
+     /*
+     parameters {
+               choice(name: 'ENV_PROMOTE', choices: 'all\npromote-to-dit\npromote-to-qa\npromote-to-prod-sj\npromote-to-prod-dal\nNone', description: 'Environment to Promote')
+               choice(name: 'TEST_TYPE', choices: 'None\nsmoke-test\nregression-test', description: 'Choose Test type regression or smoke')
+               choice(name: 'TEST_ENVIRONMENT', choices: 'None\ndev3\nhqa\nhreg1\nhreg2\nhppb\nhpp\nprod-sj\nprod-dal', description: 'Choose Test Environment')
+               choice(name: 'BLUE_GREEN_DEPLOY', choices: 'deploy-blue\ndeploy-green\nblue-to-green\nrollback\ndelete-test-route', description: 'choose blue green deployment step' )
+               choice(name: 'UPDATE_APIC', choices: 'None\napic-dit\napic-qa', description: 'Choose environment to update APIC. ARTIFACT_VERSION if entered, will be used for determining build-plugin-apic-deploy' )
+               string(name: 'ARTIFACT_VERSION', defaultValue: '', description: 'Enter Artifact version from Artifactory. Note: If no versioned entered, will deploy with current branch version.')
+               string(name: 'CONFIG_VERSION', defaultValue: '', description: 'Enter config version from Artifactory. Probable Values: 1.0.0-SNAPSHOT, 1.0.0, LATEST-SNAPSHOT, LATEST-RELEASE')
+               string(name: 'CONFIG_ENVIRONMENT', defaultValue: '', description: 'Enter config Environment if separate config is to be used other than default space configuration. Ensure config repo has this configuration available.')
+           }
+     */
+     environment {
+       // to determine project type
+       buildType = "maven"
+       //Common variables
+       hipchatRoom = "<hipchat_room>" //Mandatory field
+       email = "<email_address>"
+       nexusIQAppId = "<TRO assigned APP ID>"
+       //optional
+       approvalGroupOverride = "<Override Approved Deployers authourized by Crowd Project Group>"
+       testDatarepoGitHttpURL = "<git_http_url_for_test_data>"
+       testMavenArgs=""
+       sonarExclusions = "'**/target/**,**/target/*','**/ui.resources/node_modules/**'"
+       sonarCoverageExclusions = '**/xyz/**, **/abc/*.js' //comma separated list of coverage Exclusions
+       sonarCoberturaReportPath = "/target/coverage/cobertura.xml"
+       sonarCloverReportPath = "/target/site/clover.xml"
+       configRepoGitHttpURL = "<git_http_url_for_config_repo>"
+       cloudantLabel = 'cloudant service label' //it's default to be 'cloudantNoSQLDB Dedicated'. Use the varaible only to override the defaul value if necessary
+       cloudantDatabase = "['db1', 'db2']"
+       // probable values 1.0.0-SNAPSHOT, 1.0.0(RELEASE VERSION), LATEST-SNAPSHOT, LATEST-RELEASE
+       configVersion = "x.x.x"
+       configEnvironment = "<manifest_config_to_pick>" //Specify if Multiple UI(AEM) environments are sharing same bluemix space and corresponding configs (appname, routes) are different.
+       replaceTokens = true // optional : To replace the token valuse in manifest file.
+       useCustomLibertyPackage = "true"
+       //DEV Environment
+       devLoginDomain = "bluemix_domain_url"
+       devCredentials = "<bluemix_credential_id_as_per_jenkins>"
+       devOrganization = "<bluemix_organization>"
+       devSpace = "<bluemix_space>"
+       devTestSuiteXML = "<test_suite_xml_file_including_path>"
+       devRegressionTestSuiteXml = "< regression test_suite_xml_file_including_path>"
+       devsmokeTestEnv = "<dev_smokeTest_environment>"
+       devSplunkPort = "<dev_splunk_port>"
+       devApicServer = "<dev apic server>"
+       devApicCredentials = "<dev apic creds id>"
+       devApicSpace = "<apic space name>"
+       devApicOrg = "<apic organization>"
+       devApicCatalog = "<apic catalog>"
+       devApicDomain = "<dev apic domain>"
+       devApicUrlPrefix = "<optional: use when apic url prefix and catalog name are not same>"
+       devToken = "optional: Jenkins secrettext credentails id for dev env"
+       //UAT Environment
+       uatLoginDomain = "bluemix_domain_url"
+       uatCredentials = "<bluemix_credential_id_as_per_jenkins>"
+       uatOrganization = "<bluemix_organization>"
+       uatSpace = "<bluemix_space>"
+       uatTestSuiteXML = "<test_suite_xml_file_including_path>"
+       uatsmokeTestEnv = "<uat_smokeTest_environment>"
+       uatSplunkPort = "<uat_splunk_port>"
+       uatApicServer = "<uat apic server>"
+       uatApicCredentials = "<uat apic creds id>"
+       uatApicSpace = "<apic space name>"
+       uatApicOrg = "<apic organization>"
+       uatApicCatalog = "<apic catalog>"
+       uatApicDomain = "<uat apic domain>"
+       //Prod Environment
+       prodLoginDomain = "bluemix_domain_url"
+       prodCredentials = "<bluemix_credential_id_as_per_jenkins>"
+       prodOrganization = "<bluemix_organization>"
+       prodSpace = "<bluemix_space>"
+       prodTestSuiteXML = "<test_suite_xml_file_including_path>"
+       prodRegressionTestSuiteXml = "<regression test_suite_xml_file_including_path>"
+       prodmokeTestEnv = "<prod_smokeTest_environment>"
+       prodSplunkPort = "<prod_splunk_port>"
+       prodApicCredentials = "<prod apic creds id>"
+       prodApicSpace = "<apic space name>"
+       prodApicOrg = "<apic organization>"
+       prodApicCatalog = "<apic catalog>"
+       prodApicDomain = "<prod apic domain>"
+     }
+
+  stages {
+      stage('Checkout'){
+        steps {
+          //clean the workspace before new pipeline run
+          deleteDir()
+          checkout scm
+        }
+      }
+      stage ('Build & CodeQuality') {
+        when { expression { params.ENV_PROMOTE == 'all' } }
+        steps {
+          buildMvn([sonar    : "true", //Mandatory
+                     enforceQualityGate: "true",
+                     sonarExclusions: "${env.sonarExclusions}",
+                     sonarCoverageExclusions: "${env.sonarCoverageExclusions}",
+                     sonarLcovReportPath: "${env.sonarLcovReportPath}",
+                     sonarCoberturaReportPath: "${env.sonarCoberturaReportPath}",
+                     clover   : "false", //Optional.
+                     cobertura: "true"
+                     ])
+              }
+        post {
+          success {
+          publishReport ([ report_type: "clover", report_dir: "target/site/coverage", reportFiles: "coverage.xml" ])
+          publishReport ([ report_type: "cobertura", report_dir: "target/site/coverage", reportFiles: "cobertura.html" ])
+          publishReport ([ report_type: "html", report_dir: "target/site/coverage", reportFiles: "report.html" ])
+                }
+              }
+      }
+
+      //Deployment & SmokeTest for Dev
+      stage('Deploy & Smoke Test to Bluemix Dev') {
+        when {
+          allOf {
+              anyOf {
+                branch 'master';
+                branch 'release/*'
+              }
+              anyOf{
+                expression { params.ENV_PROMOTE == 'all' }
+                expression { params.ENV_PROMOTE == 'promote-to-dit' }
+              }
+              expression { params.UPDATE_APIC == 'None' }
+          }
+        }
+          steps {
+            deployToBluemix ([
+              loginDomain: "${env.devLoginDomain}",
+              credentialsID: "${env.devCredentials}",
+              organization: "${env.devOrganization}",
+              space: "${env.devSpace}",
+              useCustomLibertyPackage: "${env.useCustomLibertyPackage}",
+              testSuiteXml: "${env.devTestSuiteXml}",
+              testDatarepoGitHttpURL: "${env.testDatarepoGitHttpURL}",
+              configVersion: "${env.configVersion}",
+              configRepoGitHttpURL: "${env.configRepoGitHttpURL}",
+              configEnvironment: "${env.configEnvironment}", //optional
+              smokeTestEnv: "${env.devsmokeTestEnv}",
+              testMavenArgs: "${env.testMavenArgs}" //optional
+              splunkPort: "${env.devSplunkPort}",
+              deployType: "${params.BLUE_GREEN_DEPLOY}"
+              replaceTokens : "${env.replaceTokens}",
+              token: "${env.devtoken}",
+              approvalGroupOverride: "${env.approvalGroupOverride}",
+              cloudantLabel: "${env.cloudantLabel}", //optional
+              cloudantDatabase: "${env.cloudantDatabase}" //optional
+              ])
+          }
+
+          post {
+              always {
+                publishReport([report_type: "soapui", reportDir: "test-suite/target/test-output", reportFiles: "overview-summary.html", reportName: "SoapUI DIT", reportFormat: "html"])
+              }
+          }
+      }
+
+      // update apic dit
+      stage('update APIC dit') {
+          when {
+            expression {params.UPDATE_APIC == 'apic-dit'}
+          }
+          steps {
+            updateApic([
+              apicServer : "${env.devApicServer}",
+              apicCredentials : "${env.devApicCredentials}",
+              apicSpace :  "${env.devApicSpace}",
+              apicOrg : "${env.devApicOrg}",
+              apicCatalog: "${env.devApicCatalog}",
+              apicDomain: "${env.devApicDomain}",
+              apicUrlPrefix: "${env.devApicUrlPrefix}"
+              ])
+          }
+      }
+
+      //Deployment & SmokeTest for QA
+      stage('Deploy & Smoke for Bluemix QA') {
+            when {
+              allOf {
+                  anyOf { branch 'master'; branch 'release/*' }
+                  anyOf {
+                      expression { params.ENV_PROMOTE == 'all' }
+                      expression { params.ENV_PROMOTE == 'promote-to-qa' }
+                      }
+                  expression { params.UPDATE_APIC == 'None' }
+                  }
+              }
+            steps {
+              deployToBluemix ([
+                loginDomain: "${env.uatLoginDomain}",
+                credentialsID: "${env.uatCredentials}",
+                organization: "${env.uatOrganization}",
+                space: "${env.uatSpace}",
+                useCustomLibertyPackage: "${env.useCustomLibertyPackage}",
+                testSuiteXml: "${env.uatTestSuiteXml}",
+                testDatarepoGitHttpURL: "${env.testDatarepoGitHttpURL}",
+                configVersion: "${env.configVersion}",
+                configRepoGitHttpURL: "${env.configRepoGitHttpURL}",
+                configEnvironment: "${env.configEnvironment}", //optional
+                smokeTestEnv: "${env.uatsmokeTestEnv}",
+                splunkPort: "${env.uatSplunkPort}",
+                deployType: "${params.BLUE_GREEN_DEPLOY}",
+                approvalGroupOverride: "${env.approvalGroupOverride}",
+                cloudantLabel: "${env.cloudantLabel}", //optional
+                cloudantDatabase: "${env.cloudantDatabase}" //optional
+                ])
+            }
+
+            post {
+                always {
+                  publishReport([report_type: "soapui", reportDir: "test-suite/target/test-output", reportFiles: "overview-summary.html", reportName: "SoapUI QA", reportFormat: "html"])
+                }
+            }
+        }
+
+
+      //Deployment to PROD SJ
+      stage('Deploy & Smoke for Bluemix PROD SJ') {
+          when {
+            allOf {
+                anyOf { branch 'master'; branch 'release/*' }
+                anyOf { expression { params.ENV_PROMOTE == 'promote-to-prod-sj' } }
+              }
+            }
+          steps {
+            deployToBluemix ([
+              domain: "${env.prodDomain}",
+              credentialsID: "${env.prodCredentials}",
+              organization: "${env.prodOrganization}",
+              space: "${env.prodSpace}",
+              useCustomLibertyPackage: "${env.useCustomLibertyPackage}",
+              testSuiteXml: "${env.prodTestSuiteXml}",
+              testDatarepoGitHttpURL: "${env.testDatarepoGitHttpURL}",
+              configVersion: "${env.configVersion}",
+              configRepoGitHttpURL: "${env.configRepoGitHttpURL}",
+              smokeTestEnv: "${env.prodsmokeTestEnv}",
+              splunkPort: "${env.prodSplunkPort}",
+              deployType: "${params.BLUE_GREEN_DEPLOY}",
+              approvalGroupOverride: "${env.approvalGroupOverride}",
+              cloudantLabel: "${env.cloudantLabel}", //optional
+              cloudantDatabase: "${env.cloudantDatabase}" //optional
+              ])
+          }
+
+          post {
+              always {
+                publishReport([report_type: "soapui", reportDir: "test-suite/target/test-output", reportFiles: "overview-summary.html", reportName: "SoapUI PROD", reportFormat: "html"])
+              }
+          }
+      }
+
+
+    //Deployment to PROD DAL
+    stage('Deploy & Smoke for Bluemix PROD DAL') {
+        when {
+            allOf {
+              anyOf { branch 'master'; branch 'release/*' }
+              anyOf { expression { params.ENV_PROMOTE == 'promote-to-prod-dal' } }
+            }
+          }
+        steps {
+          deployToBluemix ([
+            domain: "${env.prodDomain}",
+            credentialsID: "${env.prodCredentials}",
+            organization: "${env.prodOrganization}",
+            space: "${env.prodSpace}",
+            useCustomLibertyPackage: "${env.useCustomLibertyPackage}",
+            testSuiteXml: "${env.prodTestSuiteXml}",
+            testDatarepoGitHttpURL: "${env.testDatarepoGitHttpURL}",
+            configVersion: "${env.configVersion}",
+            configRepoGitHttpURL: "${env.configRepoGitHttpURL}",
+            smokeTestEnv: "${env.prodsmokeTestEnv}",
+            splunkPort: "${env.prodSplunkPort}",
+            deployType: "${params.BLUE_GREEN_DEPLOY}",
+            approvalGroupOverride: "${env.approvalGroupOverride}",
+            cloudantLabel: "${env.cloudantLabel}", //optional
+            cloudantDatabase: "${env.cloudantDatabase}" //optional
+            ])
+        }
+
+        post {
+            always {
+              publishReport([report_type: "soapui", reportDir: "test-suite/target/test-output", reportFiles: "overview-summary.html", reportName: "SoapUI PROD", reportFormat: "html"])
+            }
+        }
+    }
+
+    stage('Smoke Test Dev'){
+      when {
+          allOf {
+            anyOf { branch 'master'; branch 'release/*' }
+            environment name:'TEST_TYPE', value:'smoke-test'
+          }
+        }
+      steps {
+        soapUITestOnly([
+            testSuiteXml: "${env.devTestSuiteXml}",
+            testDatarepoGitHttpURL: "${env.testDatarepoGitHttpURL}",
+            smokeTestEnv: "${params.TEST_ENVIRONMENT}",
+            testMavenArgs: "${env.testMavenArgs}" //optional
+          ])
+      }
+    }
+
+    stage('Regression Test Dev'){
+      when {
+          allOf {
+            anyOf { branch 'master'; branch 'release/*' }
+            environment name:'TEST_TYPE', value:'regression-test'
+          }
+        }
+      steps {
+        soapUITestOnly([
+            testSuiteXml: "${env.devRegressionTestSuiteXml}",
+            testDatarepoGitHttpURL: "${env.testDatarepoGitHttpURL}",
+            smokeTestEnv: "${params.TEST_ENVIRONMENT}",
+            testMavenArgs: "${env.testMavenArgs}" //optional
+          ])
+      }
+    }
+
+    stage('Smoke Test Prod'){
+      when {
+          allOf {
+            branch 'release/*'
+            environment name:'TEST_TYPE', value:'smoke-test'
+            expression { TEST_ENVIRONMENT == 'prod-sj' || TEST_ENVIRONMENT == 'prod-dal'}
+          }
+        }
+      steps {
+        soapUITestOnly([
+            testSuiteXml: "${env.prodTestSuiteXml}",
+            testDatarepoGitHttpURL: "${env.testDatarepoGitHttpURL}",
+            smokeTestEnv: "${params.TEST_ENVIRONMENT}",
+            testMavenArgs: "${env.testMavenArgs}" //optional
+          ])
+      }
+    }
+
+    stage('Regression Test Prod'){
+      when {
+          allOf {
+            branch 'release/*'
+            environment name:'TEST_TYPE', value:'regression-test'
+            expression { TEST_ENVIRONMENT == 'prod-sj' || TEST_ENVIRONMENT == 'prod-dal'}
+          }
+        }
+      steps {
+        soapUITestOnly([
+            testSuiteXml: "${env.prodRegressionTestSuiteXml}",
+            testDatarepoGitHttpURL: "${env.testDatarepoGitHttpURL}",
+            smokeTestEnv: "${params.TEST_ENVIRONMENT}",
+            testMavenArgs: "${env.testMavenArgs}" //optional
+          ])
+      }
+    }
+
+  }
+    //Pipeline Post steps
+    post {
+        success {
+            notify([hipchat_room: "${env.hipchatRoom}", //Mandatory
+                    email: "${env.email}", //Optional
+                    build_status: "SUCCESS" ])
+        }
+        failure {
+            notify([hipchat_room: "${env.hipchatRoom}", //Mandatory
+                    email: "${env.email}", //Optional
+                    build_status: "FAILED" ])
+        }
+    }
+}
